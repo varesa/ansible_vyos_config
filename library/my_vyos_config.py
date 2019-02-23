@@ -16,16 +16,16 @@
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-ANSIBLE_METADATA = {'metadata_version': '1.1',
+ANSIBLE_METADATA = {'metadata_version': '1.2',
                     'status': ['preview'],
                     'supported_by': 'network'}
 
 
 DOCUMENTATION = """
 ---
-module: vyos_config
+module: my_vyos_config
 version_added: "2.2"
-author: "Nathaniel Case (@qalthos)"
+author: "Nathaniel Case (@qalthos), Esa Varemo (@varesa)"
 short_description: Manage VyOS configuration on remote device
 description:
   - This module provides configuration file management of VyOS
@@ -35,9 +35,7 @@ description:
     in the device configuration.
 extends_documentation_fragment: vyos
 notes:
-  - Tested against VYOS 1.1.7
-  - Abbreviated commands are NOT idempotent, see
-    L(Network FAQ,../network/user_guide/faq.html#why-do-the-config-modules-always-return-changed-true-with-abbreviated-commands).
+  - Tested against VYOS 1.2.0
 options:
   lines:
     description:
@@ -50,16 +48,6 @@ options:
         file to load.  The source config file can either be in
         bracket format or set format.  The source file can include
         Jinja2 template variables.
-  match:
-    description:
-      - The C(match) argument controls the method used to match
-        against the current active configuration.  By default, the
-        desired config is matched against the active config and the
-        deltas are loaded.  If the C(match) argument is set to C(none)
-        the active configuration is ignored and the configuration is
-        always loaded.
-    default: line
-    choices: ['line', 'none']
   backup:
     description:
       - The C(backup) argument will backup the current devices active
@@ -75,13 +63,7 @@ options:
       - Allows a commit description to be specified to be included
         when the configuration is committed.  If the configuration is
         not changed or committed, this argument is ignored.
-    default: 'configured by vyos_config'
-  config:
-    description:
-      - The C(config) argument specifies the base configuration to use
-        to compare against the desired configuration.  If this value
-        is not specified, the module will automatically retrieve the
-        current active configuration from the remote device.
+    default: 'configured by my_vyos_config'
   save:
     description:
       - The C(save) argument controls whether or not changes made
@@ -94,19 +76,19 @@ options:
 
 EXAMPLES = """
 - name: configure the remote device
-  vyos_config:
+  my_vyos_config:
     lines:
       - set system host-name {{ inventory_hostname }}
       - set service lldp
       - delete service dhcp-server
 
 - name: backup and load from file
-  vyos_config:
+  my_vyos_config:
     src: vyos.cfg
     backup: yes
 
 - name: for idempotency, use full-form commands
-  vyos_config:
+  my_vyos_config:
     lines:
       # - set int eth eth2 description 'OUTSIDE'
       - set interface ethernet eth2 description 'OUTSIDE'
@@ -127,7 +109,7 @@ backup_path:
   description: The full path to the backup file
   returned: when backup is yes
   type: string
-  sample: /playbooks/ansible/backup/vyos_config.2016-07-16@22:28:34
+  sample: /playbooks/ansible/backup/my_vyos_config.2016-07-16@22:28:34
 """
 
 import re
@@ -137,7 +119,7 @@ from ansible.module_utils.network.vyos.vyos import load_config, get_config, run_
 from ansible.module_utils.network.vyos.vyos import vyos_argument_spec, get_connection
 
 
-DEFAULT_COMMENT = 'configured by vyos_config'
+DEFAULT_COMMENT = 'configured by my_vyos_config'
 
 
 def get_candidate(module):
@@ -166,6 +148,9 @@ def run(module, result):
     diff = None
     if commands:
         diff = load_config(module, commands, commit=commit, comment=comment)
+        module.debug("Diff: ")
+        module.debug(diff)
+
         result['changed'] = diff is not None
 
     if module._diff:
@@ -177,18 +162,12 @@ def main():
         src=dict(type='path'),
         lines=dict(type='list'),
 
-        match=dict(default='line', choices=['line', 'none']),
-
         comment=dict(default=DEFAULT_COMMENT),
-
-        config=dict(),
-
         backup=dict(type='bool', default=False),
         save=dict(type='bool', default=False),
     )
 
     argument_spec.update(vyos_argument_spec)
-
     mutually_exclusive = [('lines', 'src')]
 
     module = AnsibleModule(
@@ -219,4 +198,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
