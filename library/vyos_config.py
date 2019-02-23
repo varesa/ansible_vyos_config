@@ -159,32 +159,74 @@ def format_commands(commands):
     return [line for line in commands if len(line.strip()) > 0]
 
 
-def diff_config(commands, config):
-    config = [str(c).replace("'", '') for c in config.splitlines()]
+def get_diff(self, candidate=None, running=None, diff_match='line', diff_ignore_lines=None, path=None, diff_replace=None):
+    diff = {}
+    device_operations = self.get_device_operations()
+    option_values = self.get_option_values()
+
+    if candidate is None and device_operations['supports_generate_diff']:
+	raise ValueError("candidate configuration is required to generate diff")
+
+    if diff_match not in option_values['diff_match']:
+	raise ValueError("'match' value %s in invalid, valid values are %s" % (diff_match, ', '.join(option_values['diff_match'])))
+
+    if diff_replace:
+	raise ValueError("'replace' in diff is not supported")
+
+    if diff_ignore_lines:
+	raise ValueError("'diff_ignore_lines' in diff is not supported")
+
+    if path:
+	raise ValueError("'path' in diff is not supported")
+
+    set_format = candidate.startswith('set') or candidate.startswith('delete')
+    candidate_obj = NetworkConfig(indent=4, contents=candidate)
+    if not set_format:
+	config = [c.line for c in candidate_obj.items]
+	commands = list()
+	# this filters out less specific lines
+	for item in config:
+	    for index, entry in enumerate(commands):
+		if item.startswith(entry):
+		    del commands[index]
+		    break
+	    commands.append(item)
+
+	candidate_commands = ['set %s' % cmd.replace(' {', '') for cmd in commands]
+
+    else:
+	candidate_commands = str(candidate).strip().split('\n')
+
+    if diff_match == 'none':
+	diff['config_diff'] = list(candidate_commands)
+	return diff
+
+    running_commands = [str(c).replace("'", '') for c in running.splitlines()]
 
     updates = list()
     visited = set()
 
-    for line in commands:
-        item = str(line).replace("'", '')
+    for line in candidate_commands:
+	item = str(line).replace("'", '')
 
-        if not item.startswith('set') and not item.startswith('delete'):
-            raise ValueError('line must start with either `set` or `delete`')
+	if not item.startswith('set') and not item.startswith('delete'):
+	    raise ValueError('line must start with either `set` or `delete`')
 
-        elif item.startswith('set') and item not in config:
-            updates.append(line)
+	elif item.startswith('set') and item not in running_commands:
+	    updates.append(line)
 
-        elif item.startswith('delete'):
-            if not config:
-                updates.append(line)
-            else:
-                item = re.sub(r'delete', 'set', item)
-                for entry in config:
-                    if entry.startswith(item) and line not in visited:
-                        updates.append(line)
-                        visited.add(line)
+	elif item.startswith('delete'):
+	    if not running_commands:
+		updates.append(line)
+	    else:
+		item = re.sub(r'delete', 'set', item)
+		for entry in running_commands:
+		    if entry.startswith(item) and line not in visited:
+			updates.append(line)
+			visited.add(line)
 
-    return list(updates)
+    diff['config_diff'] = list(updates)
+    return diff
 
 
 def sanitize_config(config, result):
@@ -211,7 +253,7 @@ def run(module, result):
     # create loadable config that includes only the configuration updates
     connection = get_connection(module)
     try:
-        response = connection.get_diff(candidate=candidate, running=config, diff_match=module.params['match'])
+        response = get_diff(connection, candidate=candidate, running=config, diff_match=module.params['match'])
     except ConnectionError as exc:
         module.fail_json(msg=to_text(exc, errors='surrogate_then_replace'))
 
