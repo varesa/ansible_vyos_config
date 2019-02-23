@@ -129,20 +129,15 @@ backup_path:
   type: string
   sample: /playbooks/ansible/backup/vyos_config.2016-07-16@22:28:34
 """
+
 import re
 
-from ansible.module_utils._text import to_text
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.connection import ConnectionError
 from ansible.module_utils.network.vyos.vyos import load_config, get_config, run_commands
 from ansible.module_utils.network.vyos.vyos import vyos_argument_spec, get_connection
 
 
 DEFAULT_COMMENT = 'configured by vyos_config'
-
-CONFIG_FILTERS = [
-    re.compile(r'set system login user \S+ authentication encrypted-password')
-]
 
 
 def get_candidate(module):
@@ -159,107 +154,10 @@ def format_commands(commands):
     return [line for line in commands if len(line.strip()) > 0]
 
 
-def get_diff(self, candidate=None, running=None, diff_match='line', diff_ignore_lines=None, path=None, diff_replace=None):
-    diff = {}
-    device_operations = self.get_device_operations()
-    option_values = self.get_option_values()
-
-    if candidate is None and device_operations['supports_generate_diff']:
-	raise ValueError("candidate configuration is required to generate diff")
-
-    if diff_match not in option_values['diff_match']:
-	raise ValueError("'match' value %s in invalid, valid values are %s" % (diff_match, ', '.join(option_values['diff_match'])))
-
-    if diff_replace:
-	raise ValueError("'replace' in diff is not supported")
-
-    if diff_ignore_lines:
-	raise ValueError("'diff_ignore_lines' in diff is not supported")
-
-    if path:
-	raise ValueError("'path' in diff is not supported")
-
-    set_format = candidate.startswith('set') or candidate.startswith('delete')
-    candidate_obj = NetworkConfig(indent=4, contents=candidate)
-    if not set_format:
-	config = [c.line for c in candidate_obj.items]
-	commands = list()
-	# this filters out less specific lines
-	for item in config:
-	    for index, entry in enumerate(commands):
-		if item.startswith(entry):
-		    del commands[index]
-		    break
-	    commands.append(item)
-
-	candidate_commands = ['set %s' % cmd.replace(' {', '') for cmd in commands]
-
-    else:
-	candidate_commands = str(candidate).strip().split('\n')
-
-    if diff_match == 'none':
-	diff['config_diff'] = list(candidate_commands)
-	return diff
-
-    running_commands = [str(c).replace("'", '') for c in running.splitlines()]
-
-    updates = list()
-    visited = set()
-
-    for line in candidate_commands:
-	item = str(line).replace("'", '')
-
-	if not item.startswith('set') and not item.startswith('delete'):
-	    raise ValueError('line must start with either `set` or `delete`')
-
-	elif item.startswith('set') and item not in running_commands:
-	    updates.append(line)
-
-	elif item.startswith('delete'):
-	    if not running_commands:
-		updates.append(line)
-	    else:
-		item = re.sub(r'delete', 'set', item)
-		for entry in running_commands:
-		    if entry.startswith(item) and line not in visited:
-			updates.append(line)
-			visited.add(line)
-
-    diff['config_diff'] = list(updates)
-    return diff
-
-
-def sanitize_config(config, result):
-    result['filtered'] = list()
-    index_to_filter = list()
-    for regex in CONFIG_FILTERS:
-        for index, line in enumerate(list(config)):
-            if regex.search(line):
-                result['filtered'].append(line)
-                index_to_filter.append(index)
-    # Delete all filtered configs
-    for filter_index in sorted(index_to_filter, reverse=True):
-        del config[filter_index]
-
-
 def run(module, result):
-    # get the current active config from the node or passed in via
-    # the config param
-    config = module.params['config'] or get_config(module)
-
-    # create the candidate config object from the arguments
-    candidate = get_candidate(module)
 
     # create loadable config that includes only the configuration updates
-    connection = get_connection(module)
-    try:
-        response = get_diff(connection, candidate=candidate, running=config, diff_match=module.params['match'])
-    except ConnectionError as exc:
-        module.fail_json(msg=to_text(exc, errors='surrogate_then_replace'))
-
-    commands = response.get('config_diff')
-    sanitize_config(commands, result)
-
+    commands = get_candidate(module)
     result['commands'] = commands
 
     commit = not module.check_mode
@@ -268,12 +166,7 @@ def run(module, result):
     diff = None
     if commands:
         diff = load_config(module, commands, commit=commit, comment=comment)
-
-        if result.get('filtered'):
-            result['warnings'].append('Some configuration commands were '
-                                      'removed, please see the filtered key')
-
-        result['changed'] = True
+        result['changed'] = diff is not None
 
     if module._diff:
         result['diff'] = {'prepared': diff}
@@ -326,3 +219,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
